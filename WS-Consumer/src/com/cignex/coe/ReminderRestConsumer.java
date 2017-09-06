@@ -8,8 +8,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.TypeFactory;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -115,9 +123,13 @@ class CredentialContext{
 }
 
 public class ReminderRestConsumer {
+	
+	public static Connection connection;
 
 	public static void main(String[] args) {
 		// TODO Auto-generated method stub
+		
+		
 		
 		CredentialContext credentialContext = new CredentialContext("localhost", 8080, "http", "joebloggs", "test");
 		
@@ -133,23 +145,62 @@ public class ReminderRestConsumer {
 			Date date = sdf.parse("2017-09-08");
 			List<EmailReminder> emailReminderList = getRemindersBySchedule(credentialContext, date);
 			
+			Date start = new Date();
+			
 			for(EmailReminder emailReminder: emailReminderList){
-				System.out.println("Processing the email: "+emailReminder.getEmailReminderId());
+				System.out.println("Processing the email: "+emailReminder.getEmailSubjectText());
 				List<EmailAttachment> emailAttachmentList = getAttachmentByReminderId(credentialContext, emailReminder.getEmailReminderId());
 				sendEmail(credentialContext, emailReminder, emailAttachmentList);
+				//updateReminderStatus(credentialContext, emailReminder.getEmailReminderId(), "2");
 			}
 			
-			//System.out.println(updateReminderStatus(credentialContext, 2902, "2"));
+			Date stop = new Date();
+			long time = stop.getTime()-start.getTime();
+			System.out.println("Time taken for the job using Rest Call: "+time);
 			
-			//List<EmailAttachment> emailAttachmentList = getAttachmentByReminderId(credentialContext, 2801);
+			start = new Date();
 			
-			/*for(EmailAttachment attachment: emailAttachmentList){
+			for(EmailReminder emailReminder: emailReminderList){
+				System.out.println("Processing the email: "+emailReminder.getEmailSubjectText());
+				List<EmailAttachment> emailAttachmentList = getAttachmentByReminderId(credentialContext, emailReminder.getEmailReminderId());
+				sendEmail(emailReminder, emailAttachmentList);
+				//updateReminderStatus(credentialContext, emailReminder.getEmailReminderId(), "2");
+			}
+			
+			stop = new Date();
+			time = stop.getTime()-start.getTime();
+			System.out.println("Time taken for the job using DB Call: "+time);
+			
+			
+			/*List<EmailAttachment> emailAttachmentList = getAttachmentByReminderId(credentialContext, 1);
+			Date start = new Date();
+			
+			for(EmailAttachment attachment: emailAttachmentList){
 				System.out.println("Processing attachment:"+attachment.getEMAILATTACHMENTID());
 				byte[] data = getAttachmentFileById(credentialContext, attachment.getEMAILATTACHMENTID());
-				//FileOutputStream outputStream = new FileOutputStream("c:/test/"+attachment.getAttachmentFileName());
-				//outputStream.write(data);
-				//outputStream.close();
-			}*/
+				FileOutputStream outputStream = new FileOutputStream("c:/test/"+attachment.getAttachmentFileName());
+				outputStream.write(data);
+				outputStream.close();
+			}
+			
+			Date stop = new Date();
+			long time = stop.getTime()-start.getTime();
+			System.out.println("Time taken for the job using Rest Call: "+time);
+			
+			start = new Date();
+			
+			for(EmailAttachment attachment: emailAttachmentList){
+				System.out.println("Processing attachment:"+attachment.getEMAILATTACHMENTID());
+				byte[] data = getAttachmentFromDb(attachment.getEMAILATTACHMENTID());
+				FileOutputStream outputStream = new FileOutputStream("c:/test2/"+attachment.getAttachmentFileName());
+				outputStream.write(data);
+				outputStream.close();
+			}
+			
+			stop = new Date();
+			time = stop.getTime()-start.getTime();
+			System.out.println("Time taken for the job using DB Call: "+time);*/
+			
 			
 		} catch (ClientProtocolException e) {
 			// TODO Auto-generated catch block
@@ -158,6 +209,9 @@ public class ReminderRestConsumer {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (ParseException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (SQLException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (MessagingException e) {
@@ -280,6 +334,97 @@ public class ReminderRestConsumer {
         Transport.send(msg);
 		
 	}
+	
+public static void sendEmail(EmailReminder emailReminder, List<EmailAttachment> emailAttachmentList) throws MessagingException, ClientProtocolException, IOException, SQLException{
+		
+		final String userName = "vishalrangrasconsult@gmail.com";
+		final String password = "Neilparker@91";
+		
+		// sets SMTP server properties
+        Properties properties = new Properties();
+        properties.put("mail.smtp.host", "smtp.gmail.com");
+        properties.put("mail.smtp.port", "587");
+        properties.put("mail.smtp.auth", "true");
+        properties.put("mail.smtp.starttls.enable", "true");
+        properties.put("mail.user", userName);
+        properties.put("mail.password", password);
+        
+        Authenticator auth = new Authenticator() {
+            public PasswordAuthentication getPasswordAuthentication() {
+                return new PasswordAuthentication(userName, password);
+            }
+        };
+        
+        Session session = Session.getInstance(properties, auth);
+        
+        // creates a new e-mail message
+        Message msg = new MimeMessage(session);
+        
+        msg.setFrom(new InternetAddress(userName));
+        InternetAddress[] toAddresses = { new InternetAddress("vishal.rangras@cignex.com") };
+        msg.setRecipients(Message.RecipientType.TO, toAddresses);
+        msg.setSubject(emailReminder.getEmailSubjectText());
+        msg.setSentDate(new Date());
+        
+        // creates message part
+        MimeBodyPart messageBodyPart = new MimeBodyPart();
+        messageBodyPart.setContent(emailReminder.getEmailBodyText(), "text/html");
+        
+        // creates multi-part
+        Multipart multipart = new MimeMultipart();
+        multipart.addBodyPart(messageBodyPart);
+        
+        // adds attachments
+        if (emailAttachmentList != null && emailAttachmentList.size() > 0) {
+            for (EmailAttachment emailAttachment : emailAttachmentList) {
+                MimeBodyPart attachPart = new MimeBodyPart();
+                byte[] data = getAttachmentFromDb(emailAttachment.getEMAILATTACHMENTID());
+                DataSource ds = new ByteArrayDataSource(data, "application/x-any");
+                attachPart.setDataHandler(new DataHandler(ds));
+                attachPart.setFileName(emailAttachment.getAttachmentFileName());
+                multipart.addBodyPart(attachPart);
+            }
+        }
+        
+        // sets the multi-part as e-mail's content
+        msg.setContent(multipart);
+        
+        // sends the e-mail
+        Transport.send(msg);
+		
+	}
+	
+	public static byte[] getAttachmentFromDb(long emailAttachmentId) throws FileNotFoundException, IOException, SQLException{
+		Connection connection = getConnection();
+		Statement statement = connection.createStatement();
+		String sql = "select ATTACHMENT_FILE_TEXT from email_attachment where EMAIL_ATTACHMENT_ID="+emailAttachmentId;
+		ResultSet result = statement.executeQuery(sql);
+		
+		byte[] data;
+		
+		if (result.next()){
+			data = result.getBytes("ATTACHMENT_FILE_TEXT");
+			return data;
+		}
+		
+		return null;
+	}
+	
+	public static Connection getConnection() throws FileNotFoundException, IOException, SQLException{
+		
+		if (connection!=null){
+			return connection;
+		}else{
+			Properties props = new Properties();
+			props.load(new FileInputStream("connection.properties"));
+			String username = props.getProperty("user");
+			String password = props.getProperty("password");
+			String url = props.getProperty("dburl");
+			connection = DriverManager.getConnection(url, username, password);
+			return connection;
+		}
+		
+	};
 	
 	public static CloseableHttpResponse authenticateAndExecute(String hostname, int port, String scheme, String username, String password, String url, boolean isPost ) throws ClientProtocolException, IOException{
 		
